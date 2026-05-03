@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omni-agent"
+version = "1.0.0"
+dependencies = [
+    "pyarrow>=14.0",
+    "numpy>=1.26",
+    "anthropic>=0.28",
+    "httpx>=0.27",
+    "kubernetes>=29.0",
+    "prometheus-client>=0.20",
+]
