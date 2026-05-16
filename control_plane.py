@@ -47,12 +47,13 @@ If any required identifier is missing, surface the gap rather than guess.
 """
 
 
-def _load_audio_as_float32(path: str) -> np.ndarray:
-    """Load a PCM16 WAV file into a normalised float32 mono array."""
+def _load_audio_as_float32(path: str) -> tuple[np.ndarray, int]:
+    """Load a PCM16 WAV file into a normalised float32 mono array plus its sample rate."""
     with wave.open(path, "rb") as wf:
         n_channels = wf.getnchannels()
         sampwidth = wf.getsampwidth()
         n_frames = wf.getnframes()
+        sample_rate = wf.getframerate()
         raw = wf.readframes(n_frames)
 
     if sampwidth != 2:
@@ -61,7 +62,8 @@ def _load_audio_as_float32(path: str) -> np.ndarray:
     pcm = np.frombuffer(raw, dtype=np.int16)
     if n_channels > 1:
         pcm = pcm.reshape(-1, n_channels).mean(axis=1)
-    return (pcm.astype(np.float32) / 32768.0).astype(np.float32)
+    audio = (pcm.astype(np.float32) / 32768.0).astype(np.float32)
+    return audio, sample_rate
 
 
 def _build_live_anthropic_client() -> anthropic.Anthropic:
@@ -97,7 +99,7 @@ class ControlPlane:
         self._load_audio = audio_loader
 
     async def aclose(self) -> None:
-        await self.mcp.aclose()
+        await self.mcp.stop()
         self.shm.close_all()
 
     def route_request(self, natural_language_request: str) -> dict:
@@ -121,10 +123,10 @@ class ControlPlane:
         """Execute the full ingest → fingerprint → compare → license workflow."""
 
         # Step 1: ingest tensor into POSIX shared memory. The tensor itself
-        # never crosses an MCP boundary — only the 40-char hex shm name does.
-        audio = self._load_audio(audio_path)
+        # never crosses an MCP boundary — only the 28-char hex shm name does.
+        audio, sample_rate = self._load_audio(audio_path)
         shm_name = self.shm.ingest_media_tensor(audio)
-        logger.info("ingested %s -> shm_name=%s", audio_path, shm_name)
+        logger.info("ingested %s -> shm_name=%s sr=%d", audio_path, shm_name, sample_rate)
 
         # Step 2: fingerprint via the Rust + C++/CUDA backend.
         fp_config = config.get(
@@ -133,6 +135,7 @@ class ControlPlane:
         )
         fingerprint = await self.mcp.generate_fingerprint(
             media_shm_name=shm_name,
+            sample_rate=sample_rate,
             config=fp_config,
         )
         if "fingerprint_hash" not in fingerprint:
